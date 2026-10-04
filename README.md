@@ -6,7 +6,7 @@ A CLI that builds WSO2 API Platform (AI) Gateway images with policies selected f
 
 - Python 3.11+
 - Docker (running)
-- The `ap` CLI on your `PATH` ([releases](https://github.com/wso2/api-platform/releases))
+- The `ap` CLI on your `PATH` ([releases](https://github.com/wso2/api-platform/releases?q=CLI&expanded=true))
 - `git` (used to look up policy release tags)
 - For supported images: an existing `docker login` to the supported registry (e.g. `docker login registry.wso2.com`). The tool never handles registry credentials.
 
