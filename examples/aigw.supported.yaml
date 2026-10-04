@@ -1,0 +1,36 @@
+# Example / template: build on the SUPPORTED (WSO2 subscription) images with per-component base image tags,
+# keep the base image's policies (patch-upgraded at build time) and add the TypeSafe Jev policies.
+#
+# Start your own config from it:  aigw-builder init --template examples/aigw.supported.yaml -o aigw.yaml
+# Every available option is documented in config/aigw.reference.yaml (in the aigw-builder repository).
+#
+# Before building:
+#   docker login registry.wso2.com      # base images (aigw-builder never handles credentials)
+#
+#   aigw-builder build -f aigw.yaml     # -> localhost/demo-ai-gateway-gateway-{controller,runtime}:1.2.0.12
+#   To publish instead, set output.repository to your registry, `docker login` to it, and add --push.
+
+gateway:
+  version: "1.2.0.12"
+  name: demo-ai-gateway
+
+image_source: supported                   # registry.wso2.com/wso2-api-platform/gateway-*
+
+
+images:
+  builder: 1.2.0.12
+  controller: 1.2.0.11
+  runtime: 1.2.0.11
+
+base_policies: keep                       # carry over the policies in the supported base image
+upgrade_base_policies: patch              # and pick up their latest patch releases at build time
+
+output:
+  repository: localhost                   # local images only (localhost or local); set a registry to push
+
+policies:
+  - name: typesafe-jev-content-safety
+  - name: typesafe-jev-mcp-tool-intent-verification
+  - name: typesafe-jev-mcp-tool-result-screening   
+  - name: typesafe-jev-model-routing  
+  - name: typesafe-jev-tool-filtering

@@ -1,0 +1,90 @@
+# Weekly CVE audit of the pinned dependencies (requirements.lock / requirements-dev.lock) with pip-audit.
+# Also runs when the dependencies change, and on demand from the Actions tab.
+# Findings fail the run and are listed in the run summary; alerting is left to GitHub's code scanning.
+
+name: Dependency audit
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # every Monday, 07:00 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - pyproject.toml
+      - "requirements*.lock"
+      - .github/workflows/dependency-audit.yml
+  push:
+    branches: [main]
+    paths:
+      - pyproject.toml
+      - "requirements*.lock"
+      - .github/workflows/dependency-audit.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11" # keep in sync with requires-python in pyproject.toml
+  PIP_AUDIT_VERSION: "2.10.1"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.19"
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Check the lock files match pyproject.toml
+        run: |
+          set -euo pipefail
+          status=0
+          for spec in "requirements.lock:" "requirements-dev.lock:--extra dev"; do
+            lock="${spec%%:*}"; extra="${spec#*:}"
+            # Compile into a copy of the lock so its pins are kept as preferences: this only fails when
+            # pyproject.toml changed without regenerating the lock, not when newer versions exist.
+            cp "$lock" "$RUNNER_TEMP/$lock"
+            uv pip compile pyproject.toml $extra --universal --python-version "$PYTHON_VERSION" \
+              --generate-hashes --no-header -q -o "$RUNNER_TEMP/$lock"
+            if ! diff <(grep -v '^#' "$lock") "$RUNNER_TEMP/$lock" > "$RUNNER_TEMP/$lock.diff"; then
+              echo "::error file=$lock::$lock is out of date with pyproject.toml; regenerate it (see README, Updating dependencies)"
+              cat "$RUNNER_TEMP/$lock.diff"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Audit pinned dependencies
+        id: audit
+        run: |
+          set -uo pipefail
+          status=0
+          echo "## pip-audit ${PIP_AUDIT_VERSION}" > audit-report.md
+          for lock in requirements.lock requirements-dev.lock; do
+            # Audit every lock even if an earlier one fails, so the report is complete.
+            uvx "pip-audit==${PIP_AUDIT_VERSION}" -r "$lock" --require-hashes --disable-pip --desc on \
+              > "$RUNNER_TEMP/audit.out" 2>&1 || status=1
+            {
+              echo
+              echo "### \`$lock\`"
+              echo '```'
+              grep -v cachecontrol "$RUNNER_TEMP/audit.out"
+              echo '```'
+            } >> audit-report.md
+          done
+          cat audit-report.md
+          cat audit-report.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+

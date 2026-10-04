@@ -1,0 +1,167 @@
+# =====================================================================================================
+# aigw-builder - configuration reference
+#
+# Every option is listed here with its default. Copy this file, keep what you need, delete the rest.
+# Only `gateway.version` is required.
+#
+#   aigw-builder init                     # writes this file as ./aigw.yaml
+#   aigw-builder validate -f aigw.yaml    # check the config and resolve every policy
+#   aigw-builder build -f aigw.yaml       # build the images (local by default)
+#
+# This file documents the built-in defaults, so don't tailor it. For your own starting point, keep a
+# template file anywhere and use: aigw-builder init --template team.yaml  (or set AIGW_BUILDER_TEMPLATE)
+#
+# Relative paths in this file are resolved from the directory that contains it.
+# =====================================================================================================
+
+# -----------------------------------------------------------------------------------------------------
+# gateway: which gateway release to build on, and what to call the result
+# -----------------------------------------------------------------------------------------------------
+gateway:
+  # REQUIRED. Gateway release to build on. It is the default tag for all three base images
+  # (gateway-builder / -controller / -runtime; see `images` to tag them individually) and the default
+  # tag of the built images (see output.tag). Quote it so YAML keeps it as text.
+  version: "1.1.0"
+
+  # Name used in the output image names: <output.repository>/<name>-gateway-{controller,runtime}:<output.tag>
+  # Default: the name of the directory that contains this file.
+  name: my-ai-gateway
+
+# -----------------------------------------------------------------------------------------------------
+# Base images
+# -----------------------------------------------------------------------------------------------------
+# Where the base images come from:
+#   public    - public images                       (default)
+#   supported - WSO2 subscription images; run `docker login registry.wso2.com` first.
+#               aigw-builder never handles registry credentials.
+image_source: public
+
+# Optional: change the registry/namespace used for an image source, e.g. to pull through a private mirror.
+# Only the entry selected by image_source is used. Images are <prefix>/gateway-<component>:<gateway.version>.
+# Defaults shown; leave this out unless you need a different path.
+# registries:
+#   public:
+#     prefix: ghcr.io/wso2/api-platform
+#   supported:
+#     prefix: registry.wso2.com/wso2-api-platform
+
+# Override individual base images, when they don't all share gateway.version as their tag.
+# Default: none (all three are <registry prefix>/gateway-<component>:<gateway.version>).
+# Each value is either:
+#   - just a tag: keeps the registry prefix above, e.g. "1.1.0-2" -> <prefix>/gateway-runtime:1.1.0-2
+#   - a full image reference (contains "/"): used as is, ignoring image_source/registries
+images: {}
+#  builder: "1.1.0"
+#  controller: "1.1.0-2"
+#  runtime: "1.1.0-3"
+#  runtime: my.registry.example.com/wso2/gateway-runtime:1.1.0-patched
+
+# -----------------------------------------------------------------------------------------------------
+# Policies already in the base image
+# -----------------------------------------------------------------------------------------------------
+# A gateway build REPLACES the policy set; it does not add to it. These settings decide what happens to
+# the policies already in the base controller image (list them with: aigw-builder inspect <image>).
+#   keep - carry them over and apply `policies` below on top of them   (default)
+#   none - build only the policies listed below
+base_policies: keep
+
+# Base-image policies to drop. Only used with base_policies: keep. Default: [] (none).
+exclude_base_policies: []
+#  - cors
+#  - basic-auth
+
+# Move the carried-over base policies to newer releases at build time (like `brew upgrade`):
+#   none   - keep the exact versions in the base image; reproducible builds  (default)
+#   patch  - newest vX.Y.* release
+#   minor  - newest release on the Policy Hub within the same major version
+#   latest - the Policy Hub's latest release; may be a new major version with breaking changes
+# Policies you list under `policies` are never changed by this.
+# See what is available with: aigw-builder outdated -f aigw.yaml
+# One-off alternative: aigw-builder upgrade -f aigw.yaml --to minor
+# To upgrade your previous build's policies rather than the base image's: add --from last
+upgrade_base_policies: none
+
+# -----------------------------------------------------------------------------------------------------
+# output: what to do with the built images (passed to `ap gateway image build`)
+# -----------------------------------------------------------------------------------------------------
+output:
+  # Registry/namespace for the built images.
+  # Default: localhost, which keeps the images in your local image store and never pushes them.
+  # `local` (Docker: docker.io/local) is treated the same way: local only, never pushed.
+  repository: localhost
+  #  repository: myregistry.example.com/team
+
+  # Tag of the built images: <repository>/<gateway.name>-gateway-{controller,runtime}:<tag>
+  # Default: gateway.version. Docker tag syntax: letters, digits, _ . - (max 128).
+  # tag: 1.1.0-acme.1
+
+  # Push the images to `repository` after building. Default: false.
+  # Needs a real registry in `repository` and a `docker login` to it.
+  # You can also leave this false and pass --push to `build` / `upgrade` when you mean it.
+  push: false
+
+  # Target platform. Default: the Docker host's platform (recommended).
+  # Only the host's own platform works (e.g. linux/arm64 on an Apple Silicon Mac), and only together with
+  # push: true, because `ap` then builds with `buildx --push`. Cross-platform and multi-platform builds are
+  # not supported: `ap` compiles the policy engine for the host CPU only.
+  # platform: linux/arm64
+
+  # Build without the Docker build cache. Default: false.
+  no_cache: false
+
+  # Directory where `ap` writes build artifacts. Default: none.
+  # output_dir: ./dist
+
+  # Where to keep the files of each build, for review:
+  #   build.yaml           - generated by aigw-builder: base images + every policy pinned to an exact release
+  #   build-manifest.yaml  - written by `ap`: the exact policies baked into the image
+  # Overwritten by every build; `build --dry-run` writes build.yaml only.
+  # Default: aigw-build/<gateway.name>/ next to this file.
+  # build_files_dir: ./aigw-build/my-ai-gateway
+
+  # buildx builder used by `ap`.
+  #   auto   - use the current builder if it loads images into the local store; otherwise create and
+  #            use a builder named `aigw-builder` with default-load=true. This is needed on Podman.
+  #            Your selected builder is never changed.                                    (default)
+  #   <name> - always use this buildx builder
+  buildx_builder: auto
+
+# -----------------------------------------------------------------------------------------------------
+# policies: policies to add, or to pin to a specific version, on top of the base image
+# -----------------------------------------------------------------------------------------------------
+# Browse them with: aigw-builder categories | aigw-builder policies -c <category> | aigw-builder show <name>
+#
+# Each entry can have:
+#   name     REQUIRED. Policy name as listed on the Policy Hub (or the policy's name, for a local policy).
+#   version  Optional. Default: the Policy Hub's latest version.
+#              "1.2"   -> newest v1.2.x release  (Policy Hub versions are major.minor)
+#              v1.3.1  -> exactly this release
+#              v1      -> newest v1.x.x release
+#   path     Optional. Directory of a local custom policy (it must contain policy-definition.yaml).
+#            Use instead of `version`.
+#   kind     Optional. go | python. Skips automatic detection of the policy's language. Rarely needed.
+#
+# An entry with the same name as a base-image policy replaces it (upgrade or downgrade).
+# A bare name works too:  - llm-cost
+policies:
+  # Latest version on the Policy Hub
+  - name: llm-cost
+
+  # Newest release of a major.minor line
+  - name: semantic-cache
+    version: "1.2"
+
+  # Exact release
+  # - name: jwt-auth
+  #   version: v1.3.1
+
+  # Python policy: detected automatically and built from its pip package
+  # - name: granite-guardian-prompt-injection
+
+  # Local custom policy
+  # - name: my-custom-policy
+  #   path: ./policies/my-custom-policy
+
+  # Force the policy language (normally detected)
+  # - name: some-policy
+  #   kind: python

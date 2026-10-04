@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aigw-builder"
+version = "0.1.0"
+description = "Build WSO2 API Platform (AI) Gateway images with Policy Hub policies from a YAML config"
+readme = "README.md"
+requires-python = ">=3.11"
+# Minimum versions are the ones audited with pip-audit; exact pins (with hashes) are in requirements*.lock.
+dependencies = [
+    "typer>=0.27.2",
+    "rich>=15.0.0",
+    "httpx>=0.28.1",
+    "pyyaml>=6.0.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.1.1"]  # >=9.0.3 fixes PYSEC-2026-1845
+
+[project.scripts]
+aigw-builder = "aigw_builder.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aigw_builder"]
+
+# `aigw-builder init` writes this file; config/ is its single source in the repository.
+[tool.hatch.build.targets.wheel.force-include]
+"config/aigw.reference.yaml" = "aigw_builder/reference.yaml"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

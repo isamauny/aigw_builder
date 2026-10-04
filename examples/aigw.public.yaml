@@ -1,0 +1,27 @@
+# Example / template: build on the PUBLIC images (ghcr.io), keep the policies already in the base image,
+# drop one of them, and add or upgrade a few AI policies.
+#
+# Start your own config from it:  aigw-builder init --template examples/aigw.public.yaml -o aigw.yaml
+# Every available option is documented in config/aigw.reference.yaml (in the aigw-builder repository).
+#
+#   aigw-builder outdated -f aigw.yaml    # what could be upgraded
+#   aigw-builder build -f aigw.yaml       # -> localhost/my-ai-gateway-gateway-{controller,runtime}:1.2.0
+
+gateway:
+  version: "1.2.1"                # required: tag of the base images
+  name: upgraded-ai-gateway             # output image name prefix
+
+image_source: public              # ghcr.io/wso2/api-platform/gateway-*:1.2.0, no login needed
+
+base_policies: keep               # start from the policies in the stock 1.2.0 image...
+upgrade_base_policies: patch       # keep their exact versions (try patch / minor for updates)
+
+output:
+  repository: localhost                   # local images only (localhost or local); set a registry to push
+
+policies:
+  - name: typesafe-jev-content-safety
+  - name: typesafe-jev-mcp-tool-intent-verification
+  - name: typesafe-jev-mcp-tool-result-screening   
+  - name: typesafe-jev-model-routing  
+  - name: typesafe-jev-tool-filtering
