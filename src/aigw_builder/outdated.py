@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
+from .hub import PolicySummary
 from .image_inspect import ImageInventory
 from .resolver import POLICY_REPO, ResolvedPolicy, Resolver, parse_version
 
@@ -66,3 +67,9 @@ def rows_for_image(resolver: Resolver, inventory: ImageInventory) -> List[Outdat
             continue
         rows.append(OutdatedRow(p.name, p.version, **resolver.upgrade_targets(p.name, p.version)))
     return sorted(rows, key=lambda r: r.name)
+
+
+def new_policies(resolver: Resolver, present: Iterable[str]) -> List[PolicySummary]:
+    """Policies published on the Policy Hub (latest versions) whose names are not in `present`."""
+    have = set(present)
+    return sorted((p for p in resolver.hub.list_policies() if p.name not in have), key=lambda p: p.name)

@@ -1,6 +1,6 @@
 from aigw_builder.config import PolicyRef
 from aigw_builder.image_inspect import ImageInventory, InstalledPolicy
-from aigw_builder.outdated import OutdatedRow, rows_for_image
+from aigw_builder.outdated import OutdatedRow, new_policies, rows_for_image
 
 
 def test_upgrade_targets_levels(resolver) -> None:
@@ -42,3 +42,10 @@ def test_rows_for_image_uses_recorded_version(resolver) -> None:
     assert rows["jwt-auth"].current == "v1.0.1"  # untagged upstream, still reported as installed
     assert rows["jwt-auth"].patch == "v1.0.2" and rows["jwt-auth"].status == "minor"
     assert rows["thirdparty"].note
+
+
+def test_new_policies_lists_hub_policies_not_present(resolver) -> None:
+    new = new_policies(resolver, ["jwt-auth", "cors", "thirdparty"])
+    assert [p.name for p in new] == ["granite-guardian-prompt-injection", "major-pol", "semantic-cache"]
+    assert new[1].version == "2.0"  # latest on the hub
+    assert new_policies(resolver, resolver.hub.data) == []

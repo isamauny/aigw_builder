@@ -18,11 +18,11 @@ from rich.table import Table
 from . import __version__
 from .builder import (LAST_BUILD, MANIFEST_FILE, BuildError, ap_command, base_images_of, check_platform,
                       plan_build, preflight, run_build, write_build_file)
-from .outdated import rows_for_image, rows_for_policies
+from .outdated import OutdatedRow, new_policies, rows_for_image, rows_for_policies
 from .config import (TAG_RE, UPGRADE_LEVELS, Config, ConfigError, config_from_image, is_local_repository,
                      load_config, parse_config)
 from .docker_utils import DockerError
-from .hub import HubError, HubNotFound, PolicyHubClient
+from .hub import HubError, HubNotFound, PolicyHubClient, PolicySummary
 from .image_inspect import InspectError, inspect_image
 from .resolver import ResolveError, Resolver, diff_status
 from .templates import SAMPLE_CONFIG, TEMPLATE_ENV
@@ -135,7 +135,11 @@ def policies(
         console.print_json(json.dumps([p.to_dict() for p in items]))
         return
     title = "Policies" + (f" in {', '.join(category)}" if category else "")
-    table = Table(title=f"{title} ({len(items)})")
+    _print_policy_table(f"{title} ({len(items)})", items, wide)
+
+
+def _print_policy_table(title: str, items: List[PolicySummary], wide: bool = False, name_style: str = "bold") -> None:
+    table = Table(title=title)
     # Rich shrinks wrappable columns to nothing before truncating a long no_wrap cell, so give every
     # column an explicit width that adds up to the terminal width. Each column costs 3 chars of
     # border/padding, plus 1 for the closing border.
@@ -148,7 +152,7 @@ def policies(
         desc_w = left - (cat_w + 3) - 3
     else:
         cat_w = max(10, min(cat_nat, left - 3))
-    table.add_column("Name", style="bold", no_wrap=True, width=name_w)
+    table.add_column("Name", style=name_style, no_wrap=True, width=name_w)
     table.add_column("Latest", justify="right", no_wrap=True, width=6)
     table.add_column("Categories", width=cat_w)
     if show_desc:
@@ -357,17 +361,19 @@ def _print_plan(plan, show_base: bool = True) -> None:
     for p in plan.policies:
         for n in p.notes:
             console.print(f"[yellow]note:[/] {p.name}: {n}")
+    for w in plan.warnings:
+        console.print(f"[yellow]warning:[/] {w}")
     if STATE["verbose"]:
         for p in plan.policies:
             console.print(f"[dim]{p.name}: {p.ref}[/]")
 
 
 def _make_plan(cfg: Config, include_base: Optional[bool], pull: bool = True, upgrade: Optional[str] = None,
-               from_image: Optional[str] = None):
+               from_image: Optional[str] = None, include_new: bool = False):
     try:
         with _hub() as hub:
             return plan_build(cfg, Resolver(hub), include_base=include_base, pull=pull, upgrade=upgrade,
-                              from_image=from_image)
+                              from_image=from_image, include_new=include_new)
     except (InspectError, DockerError, HubError, ResolveError, BuildError) as exc:
         raise _fail(str(exc))
 
@@ -436,7 +442,7 @@ def _build_config(config: Optional[Path], from_image: Optional[str], tag: Option
 
 
 def _run_build(config: Optional[Path], dry_run: bool, push: bool, upgrade: Optional[str], from_image: Optional[str],
-               tag: Optional[str] = None) -> None:
+               tag: Optional[str] = None, include_new: bool = False) -> None:
     _check_level(upgrade)
     cfg = _build_config(config, from_image, tag)
     if push:
@@ -453,7 +459,7 @@ def _run_build(config: Optional[Path], dry_run: bool, push: bool, upgrade: Optio
             preflight(cfg, log=lambda m: console.print(f"[dim]{m}[/]"))
         except (BuildError, DockerError) as exc:
             raise _fail(str(exc))
-    plan = _make_plan(cfg, include_base=None, upgrade=upgrade, from_image=from_image)
+    plan = _make_plan(cfg, include_base=None, upgrade=upgrade, from_image=from_image, include_new=include_new)
     _print_plan(plan)
     _report_errors(plan)
 
@@ -513,16 +519,20 @@ def upgrade(
     push: bool = typer.Option(False, "--push", help="Push the images to output.repository (default: local only)."),
     from_image: Optional[str] = typer.Option(None, "--from", help=FROM_HELP),
     tag: Optional[str] = typer.Option(None, "--tag", help=TAG_HELP),
+    include_new: bool = typer.Option(False, "--include-new",
+                                     help="Also add, at their latest release, the Policy Hub policies the build "
+                                          "does not include yet (see `outdated`)."),
 ) -> None:
     """Rebuild with the carried-over policies upgraded to newer releases (like `brew upgrade`).
 
     Use --from last to upgrade the policies of your previous build rather than those of the base image.
     Without --file, `--from <image> --tag <new tag>` upgrades that earlier build as is: same policies, same
-    base images, same name and repository, new tag.
+    base images, same name and repository, new tag. --include-new also adds the policies published on the
+    Policy Hub that are not in the build (except those in exclude_base_policies).
     """
     if to == "none":
         raise _fail("--to must be patch, minor or latest")
-    _run_build(config, dry_run, push, to, from_image, tag)
+    _run_build(config, dry_run, push, to, from_image, tag, include_new)
 
 
 @app.command()
@@ -531,14 +541,20 @@ def outdated(
     config: Optional[Path] = typer.Option(None, "--file", "-f", help="Check the policies this config would build."),
     from_image: Optional[str] = typer.Option(None, "--from", help=FROM_HELP),
     show_all: bool = typer.Option(False, "--all", "-a", help="Also list policies that are up to date."),
+    show_new: bool = typer.Option(True, "--new/--no-new",
+                                  help="Also list Policy Hub policies that are not in the image or config."),
     pull: bool = typer.Option(True, "--pull/--no-pull", help="Pull the image if it is not available locally."),
     as_json: bool = typer.Option(False, "--json", help="Output JSON."),
 ) -> None:
-    """Compare an image's policies with the newest releases on the Policy Hub (like `brew outdated`)."""
+    """Compare an image's policies with the newest releases on the Policy Hub (like `brew outdated`).
+
+    Also lists policies published on the Policy Hub that the image (or config) does not include yet.
+    """
     if bool(image) == bool(config):
         raise _fail("give either an IMAGE or --file <config>")
     if from_image and not config:
         raise _fail("--from needs --file <config>; to check an image on its own, pass it as IMAGE")
+    new = []
     try:
         with _hub() as hub:
             resolver = Resolver(hub)
@@ -546,23 +562,38 @@ def outdated(
                 inv = inspect_image(image, pull=pull)
                 title = inv.image
                 rows = rows_for_image(resolver, inv)
+                present = [p.name for p in inv.policies]
             else:
                 cfg = _load(config)
                 plan = plan_build(cfg, resolver, pull=pull, upgrade="none", from_image=from_image)
                 _report_errors(plan)
                 title = f"{cfg.source.name} ({plan.baseline_image or 'config only'} + config)"
                 rows = rows_for_policies(resolver, plan.policies)
+                # Base policies the config deliberately excludes are not "new".
+                present = [p.name for p in plan.policies] + cfg.exclude_base_policies
+            if show_new:
+                new = new_policies(resolver, present)
     except (InspectError, DockerError, HubError, ResolveError, BuildError) as exc:
         raise _fail(str(exc))
 
     shown = rows if show_all else [r for r in rows if r.outdated or r.status == "unknown"]
     if as_json:
-        console.print_json(json.dumps({"target": title, "policies": [r.to_dict() for r in shown]}))
+        doc: Dict[str, Any] = {"target": title, "policies": [r.to_dict() for r in shown]}
+        if show_new:
+            doc["new"] = [p.to_dict() for p in new]
+        console.print_json(json.dumps(doc))
         return
     n_out = sum(r.outdated for r in rows)
     if not shown:
         console.print(f"[green]All {len(rows)} policies in {title} are up to date.[/]")
-        return
+    else:
+        _print_outdated(title, rows, shown, n_out, config, from_image)
+    if new:
+        _print_new(title, new)
+
+
+def _print_outdated(title: str, rows: List[OutdatedRow], shown: List[OutdatedRow], n_out: int,
+                    config: Optional[Path], from_image: Optional[str]) -> None:
     table = Table(title=f"{title}: {n_out} of {len(rows)} policies outdated")
     table.add_column("Policy", style="bold")
     table.add_column("Current")
@@ -584,6 +615,12 @@ def outdated(
             hint += f" --from {from_image}"
         console.print(f"[dim]Upgrade with: aigw-builder upgrade {hint} --to patch|minor|latest "
                       "(minor stays within the current major)[/]")
+
+
+def _print_new(title: str, new: List[PolicySummary]) -> None:
+    _print_policy_table(f"New on the Policy Hub, not in {title} ({len(new)})", new, name_style="bold green")
+    console.print("[dim]Add them all with: aigw-builder upgrade ... --include-new, or pick some under `policies:` "
+                  "in your config; details with: aigw-builder show <name>[/]")
 
 
 if __name__ == "__main__":  # pragma: no cover

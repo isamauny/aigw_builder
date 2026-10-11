@@ -11,8 +11,9 @@ from typing import Dict, List, Optional, Tuple
 
 from . import docker_utils as dk
 from .buildfile import render
-from .config import COMPONENTS, Config
+from .config import COMPONENTS, Config, PolicyRef
 from .image_inspect import ImageInventory, inspect_image
+from .outdated import new_policies
 from .resolver import DiffRow, ResolvedPolicy, ResolveError, Resolver, merge
 
 
@@ -28,6 +29,7 @@ class BuildPlan:
     base_inventory: Optional[ImageInventory] = None
     errors: List[str] = field(default_factory=list)
     baseline_image: Optional[str] = None  # image the carried-over policies were read from
+    warnings: List[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -112,6 +114,22 @@ def resolve_base(resolver: Resolver, inventory: ImageInventory, cfg: Config) -> 
     return resolved, errors
 
 
+def add_new_policies(resolver: Resolver, cfg: Config, plan: BuildPlan) -> None:
+    """Add every Policy Hub policy the plan does not build yet (and the config does not exclude), at its latest
+    release. A policy that cannot be resolved is skipped with a warning rather than failing the build."""
+    for summary in new_policies(resolver, [p.name for p in plan.policies] + cfg.exclude_base_policies):
+        try:
+            p = resolver.resolve_ref(PolicyRef(summary.name))
+        except ResolveError as exc:
+            plan.warnings.append(f"--include-new: skipped {exc}")
+            continue
+        p.origin = "hub"
+        plan.policies.append(p)
+        plan.diff.append(DiffRow(p.name, "added", "", p.version))
+    plan.policies.sort(key=lambda p: p.name)
+    plan.diff.sort(key=lambda r: r.name)
+
+
 def plan_build(
     cfg: Config,
     resolver: Resolver,
@@ -119,13 +137,23 @@ def plan_build(
     pull: bool = True,
     upgrade: Optional[str] = None,
     from_image: Optional[str] = None,
+    include_new: bool = False,
 ) -> BuildPlan:
     """Resolve the final policy set.
 
     `upgrade` overrides cfg.upgrade_base_policies (none|patch|minor|latest). `from_image` takes the carried-over
     policies from another controller image (e.g. a previous build, or "last") instead of the base image; the
-    build itself still uses the configured base images.
+    build itself still uses the configured base images. `include_new` also adds the Policy Hub policies the
+    build would not include otherwise (see add_new_policies).
     """
+    plan = _plan_build(cfg, resolver, include_base, pull, upgrade, from_image)
+    if include_new:
+        add_new_policies(resolver, cfg, plan)
+    return plan
+
+
+def _plan_build(cfg: Config, resolver: Resolver, include_base: Optional[bool], pull: bool, upgrade: Optional[str],
+                from_image: Optional[str]) -> BuildPlan:
     configured, errors = resolver.resolve_all(cfg.policies)
     keep_base = cfg.base_policies == "keep" if include_base is None else include_base
     if from_image:

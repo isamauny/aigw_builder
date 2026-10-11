@@ -121,7 +121,7 @@ class ResolvedPolicy:
     version: str  # exact vX.Y.Z ('' for local policies)
     kind: str  # go | python | local
     ref: str  # gomodule / pipPackage / absolute filePath
-    origin: str = "config"  # config | base
+    origin: str = "config"  # config | base | hub (added by --include-new)
     requested: str = ""  # what the user asked for (for display)
     notes: List[str] = field(default_factory=list)
 

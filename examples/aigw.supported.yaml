@@ -23,7 +23,7 @@ images:
   runtime: 1.2.0.11
 
 base_policies: keep                       # carry over the policies in the supported base image
-upgrade_base_policies: patch              # and pick up their latest patch releases at build time
+upgrade_base_policies: minor              # and pick up their latest patch releases at build time
 
 output:
   repository: localhost                   # local images only (localhost or local); set a registry to push

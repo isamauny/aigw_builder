@@ -98,9 +98,11 @@ Like `brew outdated` / `brew upgrade`:
 aigw-builder outdated ghcr.io/wso2/api-platform/gateway-controller:1.1.0   # policies in an image
 aigw-builder outdated -f aigw.yaml          # policies the config would build (base image + your list)
 aigw-builder outdated -f aigw.yaml --all    # include up-to-date policies
+aigw-builder outdated -f aigw.yaml --no-new # skip the list of new Policy Hub policies
 
 aigw-builder upgrade -f aigw.yaml --dry-run # rebuild with base policies moved to newer releases
 aigw-builder upgrade -f aigw.yaml --to patch
+aigw-builder upgrade -f aigw.yaml --include-new   # also add the policies that are new on the Policy Hub
 
 # Start from a previous build instead of the stock base image
 aigw-builder outdated -f aigw.yaml --from last
@@ -116,6 +118,8 @@ For each policy, `outdated` shows the newest release at three levels:
 - **patch**: newest `vX.Y.*`
 - **minor**: newest release published on the Policy Hub within the same major version
 - **latest**: the Policy Hub's latest release, which can be a new major version
+
+`outdated` also lists the policies published on the Policy Hub that the image (or the config's build) does not include, such as policies released after the base image was built. Policies listed in `exclude_base_policies` are not reported as new. `--no-new` hides this list; with `--json` it is under the `new` key. To build them in, either list the ones you want under `policies` in the config, or run `upgrade --include-new` to add all of them at their latest Policy Hub release (shown as `hub` / `added` in the plan). A new policy that has no release tag to build from is skipped with a warning instead of failing the build.
 
 `upgrade --to patch|minor|latest` (default `minor`) builds with the carried-over base policies moved to that level.
 
