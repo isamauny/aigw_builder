@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from . import docker_utils as dk
 from .buildfile import render
@@ -69,30 +69,40 @@ BASE_IMAGE_LABEL = "build.base-image"
 BUILDER_VERSION_LABEL = "build.builder-version"
 
 
-def base_images_from_labels(controller: Dict[str, str], runtime: Dict[str, str]) -> Dict[str, str]:
+def base_images_from_labels(controller: Dict[str, str], runtime: Dict[str, str],
+                            image_available: Optional[Callable[[str], bool]] = None,
+                            log: Callable[[str], None] = print) -> Dict[str, str]:
     """Base images of an `ap` build, from the labels ap puts on the built controller and runtime images.
 
     The builder image is not recorded as such; it shares the controller's prefix and is tagged with the builder
-    version. Without runtime labels (runtime image not available locally) the runtime base follows the controller.
+    version. That version is what the builder reports about itself, which is not always a published tag (e.g.
+    gateway-builder:1.2.0.15 reports 1.2.0.15-snapshot). With `image_available`, a builder tag that does not exist
+    falls back to the controller base tag when that one does. Without runtime labels (runtime image not available
+    locally) the runtime base follows the controller.
     """
     base = controller.get(BASE_IMAGE_LABEL, "")
     if "/gateway-controller:" not in base:
         return {}
     prefix, tag = base.rsplit("/gateway-controller:", 1)
+    builder = f"{prefix}/gateway-builder:{controller.get(BUILDER_VERSION_LABEL) or tag}"
+    fallback = f"{prefix}/gateway-builder:{tag}"
+    if image_available and builder != fallback and not image_available(builder) and image_available(fallback):
+        log(f"{builder} (from the {BUILDER_VERSION_LABEL} label) does not exist; using {fallback}")
+        builder = fallback
     return {
-        "builder": f"{prefix}/gateway-builder:{controller.get(BUILDER_VERSION_LABEL) or tag}",
+        "builder": builder,
         "controller": base,
         "runtime": runtime.get(BASE_IMAGE_LABEL) or f"{prefix}/gateway-runtime:{tag}",
     }
 
 
-def base_images_of(image: str, pull: bool = True) -> Dict[str, str]:
+def base_images_of(image: str, pull: bool = True, log: Callable[[str], None] = print) -> Dict[str, str]:
     """Base images an earlier `ap` build of this controller image (and its sibling runtime image) was made from."""
     dk.check_docker()
     dk.ensure_image(image, pull_if_missing=pull)
     runtime = image.replace("-gateway-controller:", "-gateway-runtime:")
     runtime_labels = dk.image_labels(runtime) if runtime != image and dk.image_exists(runtime) else {}
-    images = base_images_from_labels(dk.image_labels(image), runtime_labels)
+    images = base_images_from_labels(dk.image_labels(image), runtime_labels, dk.image_available, log)
     if not images:
         raise BuildError(f"{image} has no {BASE_IMAGE_LABEL} label, so it was not built by `ap` (a stock image?); "
                          "pass -f <config> to say which base images to build on")

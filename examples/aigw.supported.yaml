@@ -11,22 +11,22 @@
 #   To publish instead, set output.repository to your registry, `docker login` to it, and add --push.
 
 gateway:
-  version: "1.2.0.12"
+  version: "1.2.0.15-up"
   name: demo-ai-gateway
 
 image_source: supported                   # registry.wso2.com/wso2-api-platform/gateway-*
 
 
 images:
-  builder: 1.2.0.12
-  controller: 1.2.0.11
-  runtime: 1.2.0.11
+  builder: 1.2.0.15
+  controller: 1.2.0.15
+  runtime: 1.2.0.15
 
 base_policies: keep                       # carry over the policies in the supported base image
 upgrade_base_policies: minor              # and pick up their latest patch releases at build time
 
 output:
-  repository: localhost                   # local images only (localhost or local); set a registry to push
+  repository: repo.apis.coach:445/agent-manager                   # local images only (localhost or local); set a registry to push
 
 policies:
   - name: typesafe-jev-content-safety

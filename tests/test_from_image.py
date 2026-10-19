@@ -62,3 +62,29 @@ def test_config_from_image_rejects_non_ap_names(tmp_path: Path) -> None:
         config_from_image(f"{PUBLIC}/gateway-controller:1.2.1", bases, tmp_path)
     with pytest.raises(ConfigError, match="not a controller image built by ap"):
         config_from_image("localhost/gw-gateway-runtime:1.2.1", bases, tmp_path)
+
+
+def test_builder_tag_from_label_falls_back_when_not_published() -> None:
+    # gateway-builder:1.2.0.15 reports itself as 1.2.0.15-snapshot, which is not a published tag
+    controller = {"build.base-image": f"{SUPPORTED}/gateway-controller:1.2.0.15",
+                  "build.builder-version": "1.2.0.15-snapshot"}
+    published = {f"{SUPPORTED}/gateway-builder:1.2.0.15"}
+    warnings = []
+    images = base_images_from_labels(controller, {}, published.__contains__, warnings.append)
+    assert images["builder"] == f"{SUPPORTED}/gateway-builder:1.2.0.15"
+    assert len(warnings) == 1 and "1.2.0.15-snapshot" in warnings[0]
+
+
+def test_builder_tag_from_label_kept_when_published() -> None:
+    controller = {"build.base-image": f"{SUPPORTED}/gateway-controller:1.2.0.15",
+                  "build.builder-version": "1.2.0.12"}
+    published = {f"{SUPPORTED}/gateway-builder:1.2.0.12", f"{SUPPORTED}/gateway-builder:1.2.0.15"}
+    images = base_images_from_labels(controller, {}, published.__contains__, pytest.fail)
+    assert images["builder"] == f"{SUPPORTED}/gateway-builder:1.2.0.12"
+
+
+def test_builder_tag_from_label_kept_when_fallback_missing_too() -> None:
+    controller = {"build.base-image": f"{SUPPORTED}/gateway-controller:1.2.0.15",
+                  "build.builder-version": "1.2.0.15-snapshot"}
+    images = base_images_from_labels(controller, {}, lambda image: False, pytest.fail)
+    assert images["builder"] == f"{SUPPORTED}/gateway-builder:1.2.0.15-snapshot"

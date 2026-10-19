@@ -57,6 +57,11 @@ def image_exists(image: str) -> bool:
     return run(["docker", "image", "inspect", image], check=False).returncode == 0
 
 
+def image_available(image: str) -> bool:
+    """True if the image is in the local store or its manifest can be read from the registry (nothing is pulled)."""
+    return image_exists(image) or run(["docker", "manifest", "inspect", image], check=False).returncode == 0
+
+
 def pull(image: str, platform: Optional[str] = None) -> None:
     cmd = ["docker", "pull", "--quiet"]
     if platform:

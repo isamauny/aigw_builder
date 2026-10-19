@@ -422,7 +422,9 @@ def _build_config(config: Optional[Path], from_image: Optional[str], tag: Option
             raise _fail(f"--tag is required to rebuild {from_image} without a config, so the new images do not "
                         "overwrite it")
         try:
-            cfg = config_from_image(from_image, base_images_of(from_image), Path.cwd())
+            cfg = config_from_image(
+                from_image, base_images_of(from_image, log=lambda w: console.print(f"[yellow]warning:[/] {w}")),
+                Path.cwd())
         except (BuildError, DockerError) as exc:
             raise _fail(str(exc))
         except ConfigError as exc:
