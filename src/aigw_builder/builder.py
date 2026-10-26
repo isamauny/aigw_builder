@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -67,6 +68,7 @@ def resolve_baseline(cfg: Config, from_image: Optional[str]) -> Tuple[str, bool]
 
 BASE_IMAGE_LABEL = "build.base-image"
 BUILDER_VERSION_LABEL = "build.builder-version"
+SNAPSHOT_RE = re.compile(r"-snapshot$", re.IGNORECASE)
 
 
 def base_images_from_labels(controller: Dict[str, str], runtime: Dict[str, str],
@@ -77,18 +79,23 @@ def base_images_from_labels(controller: Dict[str, str], runtime: Dict[str, str],
     The builder image is not recorded as such; it shares the controller's prefix and is tagged with the builder
     version. That version is what the builder reports about itself, which is not always a published tag (e.g.
     gateway-builder:1.2.0.15 reports 1.2.0.15-snapshot). With `image_available`, a builder tag that does not exist
-    falls back to the controller base tag when that one does. Without runtime labels (runtime image not available
-    locally) the runtime base follows the controller.
+    falls back to the label without its -snapshot suffix, then to the controller base tag (the builder and
+    controller tags can differ, so the label's version is preferred). Without runtime labels (runtime image not
+    available locally) the runtime base follows the controller.
     """
     base = controller.get(BASE_IMAGE_LABEL, "")
     if "/gateway-controller:" not in base:
         return {}
     prefix, tag = base.rsplit("/gateway-controller:", 1)
-    builder = f"{prefix}/gateway-builder:{controller.get(BUILDER_VERSION_LABEL) or tag}"
-    fallback = f"{prefix}/gateway-builder:{tag}"
-    if image_available and builder != fallback and not image_available(builder) and image_available(fallback):
-        log(f"{builder} (from the {BUILDER_VERSION_LABEL} label) does not exist; using {fallback}")
-        builder = fallback
+    version = controller.get(BUILDER_VERSION_LABEL) or tag
+    builder = f"{prefix}/gateway-builder:{version}"
+    if image_available and not image_available(builder):
+        released = SNAPSHOT_RE.sub("", version)
+        for candidate in dict.fromkeys(f"{prefix}/gateway-builder:{t}" for t in (released, tag) if t != version):
+            if image_available(candidate):
+                log(f"{builder} (from the {BUILDER_VERSION_LABEL} label) does not exist; using {candidate}")
+                builder = candidate
+                break
     return {
         "builder": builder,
         "controller": base,

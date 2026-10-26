@@ -75,6 +75,18 @@ def test_builder_tag_from_label_falls_back_when_not_published() -> None:
     assert len(warnings) == 1 and "1.2.0.15-snapshot" in warnings[0]
 
 
+def test_builder_tag_prefers_label_without_snapshot_over_controller_tag() -> None:
+    # demo build: builder 1.2.0.12 (reports 1.2.0.12-snapshot) on controller 1.2.0.11; both builders are published
+    controller = {"build.base-image": f"{SUPPORTED}/gateway-controller:1.2.0.11",
+                  "build.builder-version": "1.2.0.12-SNAPSHOT"}
+    published = {f"{SUPPORTED}/gateway-builder:1.2.0.12", f"{SUPPORTED}/gateway-builder:1.2.0.11"}
+    images = base_images_from_labels(controller, {}, published.__contains__, lambda w: None)
+    assert images["builder"] == f"{SUPPORTED}/gateway-builder:1.2.0.12"
+    published.remove(f"{SUPPORTED}/gateway-builder:1.2.0.12")
+    images = base_images_from_labels(controller, {}, published.__contains__, lambda w: None)
+    assert images["builder"] == f"{SUPPORTED}/gateway-builder:1.2.0.11"
+
+
 def test_builder_tag_from_label_kept_when_published() -> None:
     controller = {"build.base-image": f"{SUPPORTED}/gateway-controller:1.2.0.15",
                   "build.builder-version": "1.2.0.12"}
