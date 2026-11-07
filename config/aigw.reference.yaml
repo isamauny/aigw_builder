@@ -32,9 +32,11 @@ gateway:
 # Base images
 # -----------------------------------------------------------------------------------------------------
 # Where the base images come from:
-#   public    - public images                       (default)
-#   supported - WSO2 subscription images; run `docker login registry.wso2.com` first.
-#               aigw-builder never handles registry credentials.
+#   public - public images                                                         (default)
+#   lts    - WSO2 subscription images, long-term support
+#   sts    - WSO2 subscription images, short-term support
+# lts and sts need `docker login registry.wso2.com` first; aigw-builder never handles registry credentials.
+# (`supported`, the old name of lts, still works but prints a warning.)
 image_source: public
 
 # Optional: change the registry/namespace used for an image source, e.g. to pull through a private mirror.
@@ -43,8 +45,10 @@ image_source: public
 # registries:
 #   public:
 #     prefix: ghcr.io/wso2/api-platform
-#   supported:
+#   lts:
 #     prefix: registry.wso2.com/wso2-api-platform
+#   sts:
+#     prefix: registry.wso2.com/wso2-api-platform/sts
 
 # Override individual base images, when they don't all share gateway.version as their tag.
 # Default: none (all three are <registry prefix>/gateway-<component>:<gateway.version>).

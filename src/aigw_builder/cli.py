@@ -19,8 +19,8 @@ from . import __version__
 from .builder import (BASE_IMAGE_LABEL, LAST_BUILD, MANIFEST_FILE, BuildError, ap_command, base_images_of,
                       base_prefix_of, check_platform, plan_build, preflight, run_build, write_build_file)
 from .outdated import OutdatedRow, new_policies, rows_for_image, rows_for_policies
-from .config import (TAG_RE, UPGRADE_LEVELS, Config, ConfigError, config_from_image, is_local_repository,
-                     load_config, parse_config, retag_base_images)
+from .config import (IMAGE_SOURCES, TAG_RE, UPGRADE_LEVELS, Config, ConfigError, canonical_source,
+                     config_from_image, is_local_repository, load_config, parse_config, retag_base_images)
 from . import docker_utils as dk
 from .docker_utils import DockerError
 from .hub import HubError, HubNotFound, PolicyHubClient, PolicySummary
@@ -55,12 +55,15 @@ def _fail(message: str, code: int = 1) -> "typer.Exit":
 
 def _load(config: Path) -> Config:
     try:
-        return load_config(config)
+        cfg = load_config(config)
     except ConfigError as exc:
         err.print(f"[bold red]Invalid config[/] {exc.source}:")
         for e in exc.errors:
             err.print(f"  - {e}")
         raise typer.Exit(2)
+    for w in cfg.warnings:
+        err.print(f"[yellow]warning:[/] {cfg.source.name}: {w}")
+    return cfg
 
 
 def _short(text: str, width: int = 90) -> str:
@@ -500,7 +503,13 @@ def _run_build(config: Optional[Path], dry_run: bool, push: bool, upgrade: Optio
                source: Optional[str] = None) -> None:
     _check_level(upgrade)
     if source and not base:
-        raise _fail("--source needs --base <tag>: public and supported images use different tags")
+        raise _fail("--source needs --base <tag>: public, LTS and STS images use different tags")
+    if source:
+        source, alias = canonical_source(source)
+        if alias:
+            err.print(f"[yellow]warning:[/] --source: {alias}")
+        if source not in IMAGE_SOURCES:
+            raise _fail(f"--source must be one of {', '.join(IMAGE_SOURCES)}")
     cfg = _build_config(config, from_image, tag)
     if base:
         _upgrade_base(cfg, base, source, from_image)
@@ -585,10 +594,11 @@ def upgrade(
                                        help="Also move the base images (gateway-builder, -controller, -runtime) to "
                                             "this gateway release tag. The output tag follows it unless --tag or "
                                             "output.tag is set. The config file is not changed."),
-    source: Optional[str] = typer.Option(None, "--source", metavar="public|supported",
-                                         help="With --base: take the new base images from this image source. "
-                                              "Default: the registry the --from image was built on, else the "
-                                              "config's image_source."),
+    source: Optional[str] = typer.Option(None, "--source", metavar="public|lts|sts",
+                                         help="With --base: take the new base images from this image source "
+                                              "(lts/sts: WSO2 long-/short-term support images). Default: the "
+                                              "registry the --from image was built on, else the config's "
+                                              "image_source."),
 ) -> None:
     """Rebuild with the carried-over policies upgraded to newer releases (like `brew upgrade`).
 
@@ -596,7 +606,7 @@ def upgrade(
     Without --file, `--from <image> --tag <new tag>` upgrades that earlier build as is: same policies, same
     base images, same name and repository, new tag. --include-new also adds the policies published on the
     Policy Hub that are not in the build (except those in exclude_base_policies). --base <tag> also moves the
-    build to a newer gateway release (add --source to switch between public and supported images); without
+    build to a newer gateway release (add --source to switch between public, LTS and STS images); without
     --from, the carried-over policies are then those of the new base.
     """
     if to == "none":

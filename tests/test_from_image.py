@@ -7,7 +7,7 @@ from aigw_builder.buildfile import render
 from aigw_builder.config import ConfigError, config_from_image
 
 PUBLIC = "ghcr.io/wso2/api-platform"
-SUPPORTED = "registry.wso2.com/wso2-api-platform"
+LTS = "registry.wso2.com/wso2-api-platform"
 
 
 def test_base_images_from_labels() -> None:
@@ -21,9 +21,9 @@ def test_base_images_from_labels() -> None:
 
 
 def test_base_images_without_runtime_labels_follow_controller() -> None:
-    controller = {"build.base-image": f"{SUPPORTED}/gateway-controller:1.1.0-2"}
-    assert base_images_from_labels(controller, {})["runtime"] == f"{SUPPORTED}/gateway-runtime:1.1.0-2"
-    assert base_images_from_labels(controller, {})["builder"] == f"{SUPPORTED}/gateway-builder:1.1.0-2"
+    controller = {"build.base-image": f"{LTS}/gateway-controller:1.1.0-2"}
+    assert base_images_from_labels(controller, {})["runtime"] == f"{LTS}/gateway-runtime:1.1.0-2"
+    assert base_images_from_labels(controller, {})["builder"] == f"{LTS}/gateway-builder:1.1.0-2"
 
 
 def test_stock_image_has_no_base_labels() -> None:
@@ -41,11 +41,11 @@ def test_config_from_public_build(tmp_path: Path) -> None:
     assert "# Config: derived from localhost/upgraded-ai-gateway-gateway-controller:1.2.1" in render(cfg, [])
 
 
-def test_config_from_supported_build_keeps_per_component_tags(tmp_path: Path) -> None:
-    bases = {"builder": f"{SUPPORTED}/gateway-builder:1.1.0", "controller": f"{SUPPORTED}/gateway-controller:1.1.0-2",
-             "runtime": f"{SUPPORTED}/gateway-runtime:1.1.0-3"}
+def test_config_from_lts_build_keeps_per_component_tags(tmp_path: Path) -> None:
+    bases = {"builder": f"{LTS}/gateway-builder:1.1.0", "controller": f"{LTS}/gateway-controller:1.1.0-2",
+             "runtime": f"{LTS}/gateway-runtime:1.1.0-3"}
     cfg = config_from_image("my.registry/team/ai-gw-gateway-controller:1.1.0.4", bases, tmp_path)
-    assert cfg.image_source == "supported" and cfg.gateway_version == "1.1.0-2"
+    assert cfg.image_source == "lts" and cfg.gateway_version == "1.1.0-2"
     assert cfg.output.repository == "my.registry/team"
     assert cfg.images() == bases
 
@@ -66,37 +66,37 @@ def test_config_from_image_rejects_non_ap_names(tmp_path: Path) -> None:
 
 def test_builder_tag_from_label_falls_back_when_not_published() -> None:
     # gateway-builder:1.2.0.15 reports itself as 1.2.0.15-snapshot, which is not a published tag
-    controller = {"build.base-image": f"{SUPPORTED}/gateway-controller:1.2.0.15",
+    controller = {"build.base-image": f"{LTS}/gateway-controller:1.2.0.15",
                   "build.builder-version": "1.2.0.15-snapshot"}
-    published = {f"{SUPPORTED}/gateway-builder:1.2.0.15"}
+    published = {f"{LTS}/gateway-builder:1.2.0.15"}
     warnings = []
     images = base_images_from_labels(controller, {}, published.__contains__, warnings.append)
-    assert images["builder"] == f"{SUPPORTED}/gateway-builder:1.2.0.15"
+    assert images["builder"] == f"{LTS}/gateway-builder:1.2.0.15"
     assert len(warnings) == 1 and "1.2.0.15-snapshot" in warnings[0]
 
 
 def test_builder_tag_prefers_label_without_snapshot_over_controller_tag() -> None:
     # demo build: builder 1.2.0.12 (reports 1.2.0.12-snapshot) on controller 1.2.0.11; both builders are published
-    controller = {"build.base-image": f"{SUPPORTED}/gateway-controller:1.2.0.11",
+    controller = {"build.base-image": f"{LTS}/gateway-controller:1.2.0.11",
                   "build.builder-version": "1.2.0.12-SNAPSHOT"}
-    published = {f"{SUPPORTED}/gateway-builder:1.2.0.12", f"{SUPPORTED}/gateway-builder:1.2.0.11"}
+    published = {f"{LTS}/gateway-builder:1.2.0.12", f"{LTS}/gateway-builder:1.2.0.11"}
     images = base_images_from_labels(controller, {}, published.__contains__, lambda w: None)
-    assert images["builder"] == f"{SUPPORTED}/gateway-builder:1.2.0.12"
-    published.remove(f"{SUPPORTED}/gateway-builder:1.2.0.12")
+    assert images["builder"] == f"{LTS}/gateway-builder:1.2.0.12"
+    published.remove(f"{LTS}/gateway-builder:1.2.0.12")
     images = base_images_from_labels(controller, {}, published.__contains__, lambda w: None)
-    assert images["builder"] == f"{SUPPORTED}/gateway-builder:1.2.0.11"
+    assert images["builder"] == f"{LTS}/gateway-builder:1.2.0.11"
 
 
 def test_builder_tag_from_label_kept_when_published() -> None:
-    controller = {"build.base-image": f"{SUPPORTED}/gateway-controller:1.2.0.15",
+    controller = {"build.base-image": f"{LTS}/gateway-controller:1.2.0.15",
                   "build.builder-version": "1.2.0.12"}
-    published = {f"{SUPPORTED}/gateway-builder:1.2.0.12", f"{SUPPORTED}/gateway-builder:1.2.0.15"}
+    published = {f"{LTS}/gateway-builder:1.2.0.12", f"{LTS}/gateway-builder:1.2.0.15"}
     images = base_images_from_labels(controller, {}, published.__contains__, pytest.fail)
-    assert images["builder"] == f"{SUPPORTED}/gateway-builder:1.2.0.12"
+    assert images["builder"] == f"{LTS}/gateway-builder:1.2.0.12"
 
 
 def test_builder_tag_from_label_kept_when_fallback_missing_too() -> None:
-    controller = {"build.base-image": f"{SUPPORTED}/gateway-controller:1.2.0.15",
+    controller = {"build.base-image": f"{LTS}/gateway-controller:1.2.0.15",
                   "build.builder-version": "1.2.0.15-snapshot"}
     images = base_images_from_labels(controller, {}, lambda image: False, pytest.fail)
-    assert images["builder"] == f"{SUPPORTED}/gateway-builder:1.2.0.15-snapshot"
+    assert images["builder"] == f"{LTS}/gateway-builder:1.2.0.15-snapshot"

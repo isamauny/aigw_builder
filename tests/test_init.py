@@ -10,7 +10,7 @@ TEAM = """# ACME team template
 gateway:
   version: "1.2.0.11"
   name: acme-gateway
-image_source: supported
+image_source: lts
 output:
   repository: registry.acme.example/gateways
 policies:
@@ -71,7 +71,7 @@ def test_missing_template_and_no_overwrite(tmp_path: Path) -> None:
 
 def test_examples_work_as_templates(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[1]
-    for name in ("aigw.public.yaml", "aigw.supported.yaml"):
+    for name in ("aigw.public.yaml", "aigw.lts.yaml", "aigw.sts.yaml"):
         example = root / "examples" / name
         out = tmp_path / name
         result = runner.invoke(app, ["init", "--template", str(example), "-o", str(out)], env={TEMPLATE_ENV: ""})

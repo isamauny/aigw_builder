@@ -9,7 +9,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
-IMAGE_SOURCES = ("public", "supported")
+IMAGE_SOURCES = ("public", "lts", "sts")
+# Old source names still accepted (with a warning), and what they mean now.
+SOURCE_ALIASES = {"supported": "lts"}
 COMPONENTS = ("builder", "controller", "runtime")
 POLICY_KINDS = ("go", "python")
 UPGRADE_LEVELS = ("none", "patch", "minor", "latest")
@@ -25,8 +27,18 @@ TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")  # Docker tag syntax
 
 DEFAULT_REGISTRIES = {
     "public": "ghcr.io/wso2/api-platform",
-    "supported": "registry.wso2.com/wso2-api-platform",  # needs `docker login registry.wso2.com`
+    # WSO2 subscription images; both need `docker login registry.wso2.com`
+    "lts": "registry.wso2.com/wso2-api-platform",  # long-term support
+    "sts": "registry.wso2.com/wso2-api-platform/sts",  # short-term support
 }
+
+
+def canonical_source(name: str) -> Tuple[str, Optional[str]]:
+    """Image source for a name, resolving old aliases: ('lts', warning) for 'supported', (name, None) otherwise."""
+    if name in SOURCE_ALIASES:
+        new = SOURCE_ALIASES[name]
+        return new, f"{name!r} is the old name of {new!r}; please rename it"
+    return name, None
 
 
 class ConfigError(Exception):
@@ -75,6 +87,7 @@ class Config:
     policies: List[PolicyRef] = field(default_factory=list)
     from_image: Optional[str] = None  # set when the config was derived from an earlier build, not read from a file
     previous_build: Optional[str] = None  # last_build_image, frozen before --tag / --base change the output tag
+    warnings: List[str] = field(default_factory=list)  # non-fatal problems found while parsing (e.g. old names)
 
     @property
     def base_dir(self) -> Path:
@@ -151,6 +164,7 @@ def retag_base_images(cfg: Config, tag: str, source: Optional[str] = None,
     """
     if not TAG_RE.match(tag):
         raise ValueError(f"{tag!r} is not a valid image tag (letters, digits, _ . -; max 128)")
+    source = canonical_source(source)[0] if source else None
     if source and source not in IMAGE_SOURCES:
         raise ValueError(f"image source must be one of {', '.join(IMAGE_SOURCES)}, got {source!r}")
     registries = dict(cfg.registries)
@@ -206,7 +220,10 @@ def parse_config(raw: Any, source: Path) -> Config:
     if not version:
         errors.append("gateway.version: required (e.g. \"1.1.0\")")
 
-    image_source = str(raw.get("image_source") or "public").strip()
+    warnings: List[str] = []
+    image_source, alias = canonical_source(str(raw.get("image_source") or "public").strip())
+    if alias:
+        warnings.append(f"image_source: {alias}")
     if image_source not in IMAGE_SOURCES:
         errors.append(f"image_source: must be one of {', '.join(IMAGE_SOURCES)}, got {image_source!r}")
         image_source = "public"
@@ -216,9 +233,12 @@ def parse_config(raw: Any, source: Path) -> Config:
     if not isinstance(raw_regs, dict):
         errors.append("registries: must be a mapping")
         raw_regs = {}
-    for key, value in raw_regs.items():
+    for raw_key, value in raw_regs.items():
+        key, alias = canonical_source(str(raw_key))
+        if alias:
+            warnings.append(f"registries.{raw_key}: {alias}")
         if key not in IMAGE_SOURCES:
-            errors.append(f"registries.{key}: unknown image source (expected {', '.join(IMAGE_SOURCES)})")
+            errors.append(f"registries.{raw_key}: unknown image source (expected {', '.join(IMAGE_SOURCES)})")
             continue
         prefix = value.get("prefix") if isinstance(value, dict) else value
         prefix = _opt_str(prefix)
@@ -332,6 +352,7 @@ def parse_config(raw: Any, source: Path) -> Config:
         exclude_base_policies=[str(x) for x in exclude],
         output=output,
         policies=policies,
+        warnings=warnings,
     )
 
 

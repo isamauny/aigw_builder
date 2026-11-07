@@ -13,7 +13,7 @@ def test_init_writes_the_config_reference() -> None:
 
 
 def test_reference_and_examples_are_valid(tmp_path: Path) -> None:
-    for f in ["config/aigw.reference.yaml", "examples/aigw.public.yaml", "examples/aigw.supported.yaml"]:
+    for f in ["config/aigw.reference.yaml", "examples/aigw.public.yaml", "examples/aigw.lts.yaml", "examples/aigw.sts.yaml"]:
         raw = yaml.safe_load((ROOT / f).read_text())
         cfg = parse_config(raw, tmp_path / f)
         assert cfg.gateway_version

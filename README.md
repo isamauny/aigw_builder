@@ -8,7 +8,7 @@ A CLI that builds WSO2 API Platform (AI) Gateway images with policies selected f
 - Docker (running)
 - The `ap` CLI on your `PATH` ([releases](https://github.com/wso2/api-platform/releases?q=CLI&expanded=true))
 - `git` (used to look up policy release tags)
-- For supported images: an existing `docker login` to the supported registry (e.g. `docker login registry.wso2.com`). The tool never handles registry credentials.
+- For WSO2 subscription images (LTS or STS): an existing `docker login registry.wso2.com`. The tool never handles registry credentials.
 
 ## Install
 
@@ -104,7 +104,7 @@ aigw-builder upgrade -f aigw.yaml --dry-run # rebuild with base policies moved t
 aigw-builder upgrade -f aigw.yaml --to patch
 aigw-builder upgrade -f aigw.yaml --include-new   # also add the policies that are new on the Policy Hub
 aigw-builder upgrade -f aigw.yaml --base 2026.09.24   # also move the base images to a newer gateway release
-aigw-builder upgrade -f aigw.yaml --base 1.2.0.15 --source supported   # ...taken from the supported registry
+aigw-builder upgrade -f aigw.yaml --base 2026.10.0 --source sts   # ...taken from the STS images
 
 # Start from a previous build instead of the stock base image
 aigw-builder outdated -f aigw.yaml --from last
@@ -131,13 +131,13 @@ For each policy, `outdated` shows the newest release at three levels:
 
 The new base images come from the first of these that applies:
 
-1. `--source public|supported`: that image source's registry (`registries.<source>.prefix` if you set one).
+1. `--source public|lts|sts`: that image source's registry (`registries.<source>.prefix` if you set one).
 2. With `--from <image>` or `--from last`: the registry that image was built on. aigw-builder reads it from the `build.base-image` label that `ap` puts on the images it builds, or from the reference itself for a stock image such as `ghcr.io/wso2/api-platform/gateway-controller:1.2.1`. If that registry is not the config's, a warning says so. A registry that is neither a configured nor a default one, such as a mirror, is used as is.
 3. Otherwise, the config's `image_source`. Without a config, that is the registry of the `--from` image anyway.
 
-When the registry changes, every `images` override is dropped, because it points at the old registry. `--source` needs `--base`, because public and supported images use different tags.
+When the registry changes, every `images` override is dropped, because it points at the old registry. `--source` needs `--base`, because public, LTS and STS images use different tags.
 
-- **Picking the tag:** you choose the release. aigw-builder does not look up the newest tag, because the supported registry needs your credentials to list tags and the tag schemes change between releases (`1.2.1` to `2026.09.24` on the public images, `1.2.0.15` to `2026.10.0` on the supported ones).
+- **Picking the tag:** you choose the release. aigw-builder does not look up the newest tag, because `registry.wso2.com` needs your credentials to list tags and the tag schemes change between releases (`1.2.1` to `2026.09.24` on the public images; `1.2.0.15` on LTS, `2026.10.0` on STS).
 - **Carried-over policies:** without `--from`, they are read from the new base controller image, so you get the new release's stock policies, upgraded to the `--to` level. With `--from last` (or `--from <image>`), they come from your previous build as usual, and the build runs on the new base images.
 - **Output tag:** it becomes `<tag>` unless `output.tag` or `--tag` is set. `--from last` still refers to the build at the old tag.
 - **Config file:** it is not changed. To stay on the new release for later builds, update `gateway.version` and `images` yourself.
@@ -154,23 +154,25 @@ Without `--file`, `upgrade --from <image> --tag <new tag>` (and `build`, which t
 
 ### Starting from an example
 
-The two commented examples are complete, working configs. Use either one as a template for your own:
+The three commented examples are complete, working configs. Use any of them as a template for your own:
 
 - [examples/aigw.public.yaml](examples/aigw.public.yaml): public images (`ghcr.io`, no login needed), base policies kept with one excluded, AI policies added or upgraded, local output.
-- [examples/aigw.supported.yaml](examples/aigw.supported.yaml): supported (WSO2 subscription) images with per-component base image tags, base policies patch-upgraded at build time, TypeSafe Jev policies added, local output.
+- [examples/aigw.lts.yaml](examples/aigw.lts.yaml): LTS (long-term support, WSO2 subscription) images with per-component base image tags, base policies upgraded at build time, TypeSafe Jev policies added.
+- [examples/aigw.sts.yaml](examples/aigw.sts.yaml): the same on STS (short-term support, WSO2 subscription) images.
 
 ```bash
-aigw-builder init --template examples/aigw.public.yaml -o aigw.yaml      # public images
-aigw-builder init --template examples/aigw.supported.yaml -o aigw.yaml   # supported images
+aigw-builder init --template examples/aigw.public.yaml -o aigw.yaml   # public images
+aigw-builder init --template examples/aigw.lts.yaml -o aigw.yaml      # LTS images
+aigw-builder init --template examples/aigw.sts.yaml -o aigw.yaml      # STS images
 ```
 
 Then edit `aigw.yaml` before building:
 
 1. Set `gateway.name`, which names the output images.
-2. Set `gateway.version` and, for supported images, the per-component tags under `images` to the release you want.
+2. Set `gateway.version` and, for LTS or STS images, the per-component tags under `images` to the release you want.
 3. Change `policies` (browse with `aigw-builder policies -c <category>`) and `exclude_base_policies`.
 4. Set `output.repository` (and `output.tag` if needed) for where the images should go.
-5. Run `aigw-builder validate -f aigw.yaml`, then `aigw-builder build -f aigw.yaml`. For supported images, run `docker login registry.wso2.com` first.
+5. Run `aigw-builder validate -f aigw.yaml`, then `aigw-builder build -f aigw.yaml`. For LTS or STS images, run `docker login registry.wso2.com` first.
 
 The examples are in the aigw-builder repository, not in the installed package. If you installed from a wheel, download the example file first, or use the team template approach below.
 
@@ -192,9 +194,10 @@ aigw-builder init
 |---|---|---|
 | `gateway.version` | required | gateway release, e.g. `"1.1.0"`; default tag of base and built images |
 | `gateway.name` | config directory name | output image name prefix |
-| `image_source` | `public` | `public`, `supported` |
+| `image_source` | `public` | `public`, `lts` (long-term support), `sts` (short-term support); `supported` is an old name for `lts` |
 | `registries.public.prefix` | `ghcr.io/wso2/api-platform` | registry/namespace (only to override) |
-| `registries.supported.prefix` | `registry.wso2.com/wso2-api-platform` | registry/namespace (only to override) |
+| `registries.lts.prefix` | `registry.wso2.com/wso2-api-platform` | registry/namespace (only to override) |
+| `registries.sts.prefix` | `registry.wso2.com/wso2-api-platform/sts` | registry/namespace (only to override) |
 | `images.builder` / `.controller` / `.runtime` | `<prefix>/gateway-<component>:<gateway.version>` | a tag (keeps the prefix) or a full image reference |
 | `base_policies` | `keep` | `keep`, `none` |
 | `exclude_base_policies` | `[]` | policy names |
@@ -222,7 +225,7 @@ The Policy Hub publishes `major.minor` versions (e.g. `1.2`). Policy releases ar
 
 **The build succeeds but the images are not in `docker images`.** `ap` builds with `docker buildx` and does not pass `--load`. With a `docker-container` buildx builder (the only kind available on Podman), the results then stay in the build cache. With `output.buildx_builder: auto` (the default), aigw-builder detects this and runs `ap` with `BUILDX_BUILDER=aigw-builder`, a builder it creates once with `--driver-opt default-load=true`. Your selected builder is not changed. To use your own builder instead, set `output.buildx_builder: <name>`.
 
-**"Image not found ... project X not found" on the supported registry.** The registry answers like this when the image path is wrong, even if you are logged in. The default is `registry.wso2.com/wso2-api-platform`; if you set `registries.supported.prefix`, check it.
+**"Image not found ... project X not found" on registry.wso2.com.** The registry answers like this when the image path is wrong, even if you are logged in. The defaults are `registry.wso2.com/wso2-api-platform` (LTS) and `registry.wso2.com/wso2-api-platform/sts` (STS); if you set `registries.lts.prefix` or `registries.sts.prefix`, check it. A tag published on STS is usually not on LTS and vice versa (e.g. `2026.10.0` is STS only), so check `image_source` too.
 
 **A base image policy shows "not tagged upstream; using nearest release".** Stock images record the version that a floating `@vN` reference resolved to when the image was built. Some of those releases were later removed from wso2/gateway-controllers, so aigw-builder uses the nearest release in the same major.minor and shows it in the plan. To choose a different version, pin the policy under `policies`.
 

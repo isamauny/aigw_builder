@@ -13,12 +13,12 @@ def test_minimal_defaults(tmp_path: Path) -> None:
     assert cfg.image("runtime") == "ghcr.io/wso2/api-platform/gateway-runtime:1.1.0"
 
 
-def test_supported_registry_and_overrides(tmp_path: Path) -> None:
+def test_lts_registry_and_overrides(tmp_path: Path) -> None:
     cfg = parse_config(
         {
             "gateway": {"version": "1.1.0", "name": "gw"},
-            "image_source": "supported",
-            "registries": {"supported": {"prefix": "registry.wso2.com/acme/"}},
+            "image_source": "lts",
+            "registries": {"lts": {"prefix": "registry.wso2.com/acme/"}},
             "images": {"builder": "my/builder:x"},
         },
         tmp_path / "aigw.yaml",
@@ -60,9 +60,20 @@ def test_missing_file(tmp_path: Path) -> None:
         load_config(tmp_path / "nope.yaml")
 
 
-def test_supported_has_default_prefix(tmp_path: Path) -> None:
-    cfg = parse_config({"gateway": {"version": "1.1.0"}, "image_source": "supported"}, tmp_path / "aigw.yaml")
+def test_lts_and_sts_have_default_prefixes(tmp_path: Path) -> None:
+    cfg = parse_config({"gateway": {"version": "1.1.0"}, "image_source": "lts"}, tmp_path / "aigw.yaml")
     assert cfg.image("runtime") == "registry.wso2.com/wso2-api-platform/gateway-runtime:1.1.0"
+    assert cfg.warnings == []
+    cfg = parse_config({"gateway": {"version": "2026.10.0"}, "image_source": "sts"}, tmp_path / "aigw.yaml")
+    assert cfg.image("controller") == "registry.wso2.com/wso2-api-platform/sts/gateway-controller:2026.10.0"
+
+
+def test_supported_is_an_old_name_for_lts(tmp_path: Path) -> None:
+    cfg = parse_config({"gateway": {"version": "1.2.0.15"}, "image_source": "supported",
+                        "registries": {"supported": {"prefix": "registry.wso2.com/acme"}}}, tmp_path / "aigw.yaml")
+    assert cfg.image_source == "lts" and cfg.registries["lts"] == "registry.wso2.com/acme"
+    assert cfg.image("builder") == "registry.wso2.com/acme/gateway-builder:1.2.0.15"
+    assert len(cfg.warnings) == 2 and all("old name of 'lts'" in w for w in cfg.warnings)
 
 
 def test_output_is_local_by_default(tmp_path: Path) -> None:
@@ -79,8 +90,8 @@ def test_image_override_tag_or_full_reference(tmp_path: Path) -> None:
     cfg = parse_config(
         {
             "gateway": {"version": "1.1.0"},
-            "image_source": "supported",
-            "registries": {"supported": {"prefix": "registry.wso2.com/wso2-api-platform"}},
+            "image_source": "lts",
+            "registries": {"lts": {"prefix": "registry.wso2.com/wso2-api-platform"}},
             "images": {"controller": "1.1.0-2", "runtime": "my.reg/x/gateway-runtime:9"},
         },
         tmp_path / "aigw.yaml",
