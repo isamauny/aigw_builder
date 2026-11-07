@@ -103,6 +103,8 @@ aigw-builder outdated -f aigw.yaml --no-new # skip the list of new Policy Hub po
 aigw-builder upgrade -f aigw.yaml --dry-run # rebuild with base policies moved to newer releases
 aigw-builder upgrade -f aigw.yaml --to patch
 aigw-builder upgrade -f aigw.yaml --include-new   # also add the policies that are new on the Policy Hub
+aigw-builder upgrade -f aigw.yaml --base 2026.09.24   # also move the base images to a newer gateway release
+aigw-builder upgrade -f aigw.yaml --base 1.2.0.15 --source supported   # ...taken from the supported registry
 
 # Start from a previous build instead of the stock base image
 aigw-builder outdated -f aigw.yaml --from last
@@ -122,6 +124,25 @@ For each policy, `outdated` shows the newest release at three levels:
 `outdated` also lists the policies published on the Policy Hub that the image (or the config's build) does not include, such as policies released after the base image was built. Policies listed in `exclude_base_policies` are not reported as new. `--no-new` hides this list; with `--json` it is under the `new` key. To build them in, either list the ones you want under `policies` in the config, or run `upgrade --include-new` to add all of them at their latest Policy Hub release (shown as `hub` / `added` in the plan). A new policy that has no release tag to build from is skipped with a warning instead of failing the build.
 
 `upgrade --to patch|minor|latest` (default `minor`) builds with the carried-over base policies moved to that level.
+
+### Upgrading the base images
+
+`upgrade --base <tag>` also moves the three base images (`gateway-builder`, `gateway-controller`, `gateway-runtime`) to another gateway release, as if `gateway.version` were `<tag>`. Per-component tags under `images` are replaced by `<tag>`, and full image references under `images` keep their repository but get `<tag>`. The plan shows each old and new base image. Before planning, aigw-builder checks that every new image exists in the registry, so a mistyped tag or a missing `docker login` is reported straight away.
+
+The new base images come from the first of these that applies:
+
+1. `--source public|supported`: that image source's registry (`registries.<source>.prefix` if you set one).
+2. With `--from <image>` or `--from last`: the registry that image was built on. aigw-builder reads it from the `build.base-image` label that `ap` puts on the images it builds, or from the reference itself for a stock image such as `ghcr.io/wso2/api-platform/gateway-controller:1.2.1`. If that registry is not the config's, a warning says so. A registry that is neither a configured nor a default one, such as a mirror, is used as is.
+3. Otherwise, the config's `image_source`. Without a config, that is the registry of the `--from` image anyway.
+
+When the registry changes, every `images` override is dropped, because it points at the old registry. `--source` needs `--base`, because public and supported images use different tags.
+
+- **Picking the tag:** you choose the release. aigw-builder does not look up the newest tag, because the supported registry needs your credentials to list tags and the tag schemes change between releases (`1.2.1` to `2026.09.24` on the public images, `1.2.0.15` to `2026.10.0` on the supported ones).
+- **Carried-over policies:** without `--from`, they are read from the new base controller image, so you get the new release's stock policies, upgraded to the `--to` level. With `--from last` (or `--from <image>`), they come from your previous build as usual, and the build runs on the new base images.
+- **Output tag:** it becomes `<tag>` unless `output.tag` or `--tag` is set. `--from last` still refers to the build at the old tag.
+- **Config file:** it is not changed. To stay on the new release for later builds, update `gateway.version` and `images` yourself.
+
+This also works without a config: `upgrade --from <image> --tag <new tag> --base <tag>`.
 
 By default the carried-over policies are read from the configured base controller image. `--from` (on `outdated -f`, `upgrade` and `build`) reads them from another controller image instead, typically one you built earlier, so you upgrade what you actually run. `--from last` means the previous build of this config on this machine (`<output.repository>/<gateway.name>-gateway-controller:<output.tag>`). It must exist locally and is never pulled; any other image is used locally if present, otherwise pulled. The new build still uses the configured base images; only the policy set comes from the `--from` image, with your `policies` and `exclude_base_policies` applied on top. Policies you pin under `policies` are never changed. To make this permanent, set `upgrade_base_policies` in the config (default `none`, which keeps builds reproducible).
 

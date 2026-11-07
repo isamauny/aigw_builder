@@ -11,16 +11,16 @@
 #   To publish instead, set output.repository to your registry, `docker login` to it, and add --push.
 
 gateway:
-  version: "1.2.0.15-up"
+  version: "2026.10.0-up"
   name: demo-ai-gateway
 
 image_source: supported                   # registry.wso2.com/wso2-api-platform/gateway-*
 
 
 images:
-  builder: 1.2.0.15
-  controller: 1.2.0.15
-  runtime: 1.2.0.15
+  builder: 2026.10.0
+  controller: 2026.10.0
+  runtime: 2026.10.0
 
 base_policies: keep                       # carry over the policies in the supported base image
 upgrade_base_policies: minor              # and pick up their latest patch releases at build time

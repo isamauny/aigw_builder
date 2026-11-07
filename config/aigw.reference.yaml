@@ -21,6 +21,7 @@ gateway:
   # REQUIRED. Gateway release to build on. It is the default tag for all three base images
   # (gateway-builder / -controller / -runtime; see `images` to tag them individually) and the default
   # tag of the built images (see output.tag). Quote it so YAML keeps it as text.
+  # One-off move to another release, without editing this file: aigw-builder upgrade --base <tag>
   version: "1.1.0"
 
   # Name used in the output image names: <output.repository>/<name>-gateway-{controller,runtime}:<output.tag>

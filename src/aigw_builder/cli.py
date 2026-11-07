@@ -16,11 +16,12 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from . import __version__
-from .builder import (LAST_BUILD, MANIFEST_FILE, BuildError, ap_command, base_images_of, check_platform,
-                      plan_build, preflight, run_build, write_build_file)
+from .builder import (BASE_IMAGE_LABEL, LAST_BUILD, MANIFEST_FILE, BuildError, ap_command, base_images_of,
+                      base_prefix_of, check_platform, plan_build, preflight, run_build, write_build_file)
 from .outdated import OutdatedRow, new_policies, rows_for_image, rows_for_policies
 from .config import (TAG_RE, UPGRADE_LEVELS, Config, ConfigError, config_from_image, is_local_repository,
-                     load_config, parse_config)
+                     load_config, parse_config, retag_base_images)
+from . import docker_utils as dk
 from .docker_utils import DockerError
 from .hub import HubError, HubNotFound, PolicyHubClient, PolicySummary
 from .image_inspect import InspectError, inspect_image
@@ -439,14 +440,70 @@ def _build_config(config: Optional[Path], from_image: Optional[str], tag: Option
                         "rebuild an earlier build as is", 2)
         cfg = _load(config)
     if tag:
+        cfg.previous_build = cfg.last_build_image  # --from last is the build at the configured tag, not at --tag
         cfg.output.tag = tag
     return cfg
 
 
+def _from_image_prefix(cfg: Config, from_image: str) -> Optional[str]:
+    """Registry prefix of the base images the --from image was built on, warning when it is not the config's."""
+    image = cfg.last_build_image if from_image == LAST_BUILD else from_image
+    try:
+        if from_image == LAST_BUILD and not dk.image_exists(image):
+            return None  # planning reports the missing previous build
+        prefix = base_prefix_of(image, pull=from_image != LAST_BUILD, platform=cfg.output.platform)
+    except DockerError as exc:
+        raise _fail(str(exc))
+    if prefix is None:
+        console.print(f"[yellow]warning:[/] cannot tell which registry {image} was built from (no "
+                      f"{BASE_IMAGE_LABEL} label); --base uses the config's {cfg.registry_prefix}")
+    elif prefix != cfg.registry_prefix:
+        console.print(f"[yellow]warning:[/] {image} was built on {prefix} images, not on the config's "
+                      f"{cfg.registry_prefix}; --base follows {image} (pass --source to choose)")
+    return prefix
+
+
+def _upgrade_base(cfg: Config, tag: str, source: Optional[str] = None, from_image: Optional[str] = None) -> None:
+    """Move the base images to `tag` (upgrade --base) and check that the new images exist.
+
+    The registry is, in order: --source; the registry the --from image was built on; the config's image_source.
+    (Without a config, the config was derived from the --from image, so it already has that image's registry.)
+    """
+    old_source, old_prefix = cfg.image_source, cfg.registry_prefix
+    prefix = _from_image_prefix(cfg, from_image) if from_image and not source and cfg.from_image is None else None
+    try:
+        changes = retag_base_images(cfg, tag, source, prefix)
+    except ValueError as exc:
+        raise _fail(f"--base/--source: {exc}")
+    if not changes:
+        console.print(f"[dim]Base images are already at {tag} ({cfg.registry_prefix}).[/]")
+        return
+    try:
+        dk.check_docker()
+        missing = [new for _, new in changes.values() if not dk.image_available(new)]
+    except DockerError as exc:
+        raise _fail(str(exc))
+    if missing:
+        hosts = sorted({dk.registry_host(m) for m in missing})
+        raise _fail(f"--base {tag}: image(s) not found: {', '.join(missing)}. Check the tag, and that you are "
+                    f"logged in with `docker login {' / '.join(hosts)}`")
+    switched = ""
+    if (cfg.image_source, cfg.registry_prefix) != (old_source, old_prefix):
+        switched = f", {old_source} ({old_prefix}) -> {cfg.image_source} ({cfg.registry_prefix})"
+    console.print(f"[bold]Base images upgraded to {tag}[/]{switched}; output tag: {cfg.output_tag}")
+    for comp, (old, new) in changes.items():
+        console.print(f"  {comp:<10} {old} [cyan]->[/] {new}")
+
+
 def _run_build(config: Optional[Path], dry_run: bool, push: bool, upgrade: Optional[str], from_image: Optional[str],
-               tag: Optional[str] = None, include_new: bool = False) -> None:
+               tag: Optional[str] = None, include_new: bool = False, base: Optional[str] = None,
+               source: Optional[str] = None) -> None:
     _check_level(upgrade)
+    if source and not base:
+        raise _fail("--source needs --base <tag>: public and supported images use different tags")
     cfg = _build_config(config, from_image, tag)
+    if base:
+        _upgrade_base(cfg, base, source, from_image)
     if push:
         if is_local_repository(cfg.output.repository):
             raise _fail(f"--push needs output.repository set to a registry; {cfg.output.repository!r} means "
@@ -524,17 +581,27 @@ def upgrade(
     include_new: bool = typer.Option(False, "--include-new",
                                      help="Also add, at their latest release, the Policy Hub policies the build "
                                           "does not include yet (see `outdated`)."),
+    base: Optional[str] = typer.Option(None, "--base", metavar="TAG",
+                                       help="Also move the base images (gateway-builder, -controller, -runtime) to "
+                                            "this gateway release tag. The output tag follows it unless --tag or "
+                                            "output.tag is set. The config file is not changed."),
+    source: Optional[str] = typer.Option(None, "--source", metavar="public|supported",
+                                         help="With --base: take the new base images from this image source. "
+                                              "Default: the registry the --from image was built on, else the "
+                                              "config's image_source."),
 ) -> None:
     """Rebuild with the carried-over policies upgraded to newer releases (like `brew upgrade`).
 
     Use --from last to upgrade the policies of your previous build rather than those of the base image.
     Without --file, `--from <image> --tag <new tag>` upgrades that earlier build as is: same policies, same
     base images, same name and repository, new tag. --include-new also adds the policies published on the
-    Policy Hub that are not in the build (except those in exclude_base_policies).
+    Policy Hub that are not in the build (except those in exclude_base_policies). --base <tag> also moves the
+    build to a newer gateway release (add --source to switch between public and supported images); without
+    --from, the carried-over policies are then those of the new base.
     """
     if to == "none":
         raise _fail("--to must be patch, minor or latest")
-    _run_build(config, dry_run, push, to, from_image, tag, include_new)
+    _run_build(config, dry_run, push, to, from_image, tag, include_new, base, source)
 
 
 @app.command()

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -74,6 +74,7 @@ class Config:
     output: OutputConfig
     policies: List[PolicyRef] = field(default_factory=list)
     from_image: Optional[str] = None  # set when the config was derived from an earlier build, not read from a file
+    previous_build: Optional[str] = None  # last_build_image, frozen before --tag / --base change the output tag
 
     @property
     def base_dir(self) -> Path:
@@ -96,7 +97,7 @@ class Config:
     @property
     def last_build_image(self) -> str:
         """Controller image of the previous build of this config (what `--from last` refers to)."""
-        return self.output_images()[0]
+        return self.previous_build or self.output_images()[0]
 
     @property
     def output_tag(self) -> str:
@@ -115,6 +116,59 @@ class Config:
 
     def images(self) -> Dict[str, str]:
         return {c: self.image(c) for c in COMPONENTS}
+
+
+def image_repository(ref: str) -> str:
+    """Image reference without its tag or digest: 'host:5000/a/b:1.0@sha256:..' -> 'host:5000/a/b'."""
+    ref = ref.split("@", 1)[0]
+    head, _, last = ref.rpartition("/")
+    return f"{head}/{last.split(':', 1)[0]}" if head else last.split(":", 1)[0]
+
+
+def source_for_prefix(registries: Dict[str, str], prefix: str) -> Tuple[str, Dict[str, str]]:
+    """Image source and registries under which base images come from `prefix`.
+
+    A prefix already configured for a source (or a default registry) selects that source. Any other prefix (a
+    mirror) is used as the `public` source's registry.
+    """
+    for source in IMAGE_SOURCES:
+        if registries.get(source) == prefix:
+            return source, dict(registries)
+    source = next((s for s, p in DEFAULT_REGISTRIES.items() if p == prefix), "public")
+    return source, dict(registries, **{source: prefix})
+
+
+def retag_base_images(cfg: Config, tag: str, source: Optional[str] = None,
+                      prefix: Optional[str] = None) -> Dict[str, Tuple[str, str]]:
+    """Move all three base images to `tag` (upgrade --base). Returns {component: (old, new)} for those that change.
+
+    `source` switches image_source (upgrade --source); `prefix` instead takes the images from that registry
+    prefix (the one an earlier build was made from), see source_for_prefix. `source` wins if both are given.
+    gateway.version becomes `tag`, so the output tag follows it unless output.tag (or --tag) is set. Tag-only
+    overrides are dropped; full-reference overrides keep their repository and get the new tag, unless the
+    registry changes: then every override is dropped, since it points at the old registry (or a mirror of it).
+    If nothing changes, the config is left untouched.
+    """
+    if not TAG_RE.match(tag):
+        raise ValueError(f"{tag!r} is not a valid image tag (letters, digits, _ . -; max 128)")
+    if source and source not in IMAGE_SOURCES:
+        raise ValueError(f"image source must be one of {', '.join(IMAGE_SOURCES)}, got {source!r}")
+    registries = dict(cfg.registries)
+    if not source and prefix:
+        source, registries = source_for_prefix(registries, prefix.rstrip("/"))
+    source = source or cfg.image_source
+    if registries[source] != cfg.registry_prefix:
+        overrides: Dict[str, str] = {}
+    else:
+        overrides = {c: f"{image_repository(ref)}:{tag}" for c, ref in cfg.image_overrides.items() if "/" in ref}
+    upgraded = replace(cfg, gateway_version=tag, image_overrides=overrides, image_source=source, registries=registries)
+    old, new = cfg.images(), upgraded.images()
+    changes = {c: (old[c], new[c]) for c in COMPONENTS if old[c] != new[c]}
+    if changes:
+        cfg.previous_build = cfg.last_build_image
+        cfg.gateway_version, cfg.image_overrides = tag, overrides
+        cfg.image_source, cfg.registries = source, registries
+    return changes
 
 
 def _as_bool(value: Any, where: str, errors: List[str]) -> bool:
@@ -302,8 +356,7 @@ def config_from_image(image: str, base_images: Dict[str, str], base_dir: Path) -
         raise ConfigError(source, [f"{image}: cannot tell its base controller image "
                                    f"({base_images.get('controller') or 'unknown'}); pass -f <config>"])
     prefix, version = base["prefix"], base["tag"]
-    image_source = next((s for s, p in DEFAULT_REGISTRIES.items() if p == prefix), "public")
-    registries = dict(DEFAULT_REGISTRIES, **{image_source: prefix})
+    image_source, registries = source_for_prefix(DEFAULT_REGISTRIES, prefix)
     # Only components whose base differs from <prefix>/gateway-<component>:<version> need an override.
     overrides = {c: ref for c, ref in base_images.items()
                  if c in COMPONENTS and ref != f"{prefix}/gateway-{c}:{version}"}

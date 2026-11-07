@@ -12,7 +12,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from . import docker_utils as dk
 from .buildfile import render
-from .config import COMPONENTS, Config, PolicyRef
+from .config import BASE_IMAGE_RE, COMPONENTS, Config, PolicyRef
 from .image_inspect import ImageInventory, inspect_image
 from .outdated import new_policies
 from .resolver import DiffRow, ResolvedPolicy, ResolveError, Resolver, merge
@@ -114,6 +114,20 @@ def base_images_of(image: str, pull: bool = True, log: Callable[[str], None] = p
         raise BuildError(f"{image} has no {BASE_IMAGE_LABEL} label, so it was not built by `ap` (a stock image?); "
                          "pass -f <config> to say which base images to build on")
     return images
+
+
+def base_prefix_from(image: str, labels: Dict[str, str]) -> Optional[str]:
+    """Registry prefix of the base images a controller image was built on: from ap's build.base-image label, or
+    from the reference itself for a stock image (<prefix>/gateway-controller:<tag>). None if neither tells."""
+    m = BASE_IMAGE_RE.match(labels.get(BASE_IMAGE_LABEL, "")) or BASE_IMAGE_RE.match(image)
+    return m["prefix"] if m else None
+
+
+def base_prefix_of(image: str, pull: bool = True, platform: Optional[str] = None) -> Optional[str]:
+    """base_prefix_from for an image, pulled first if needed."""
+    dk.check_docker()
+    dk.ensure_image(image, pull_if_missing=pull, platform=platform)
+    return base_prefix_from(image, dk.image_labels(image))
 
 
 def resolve_base(resolver: Resolver, inventory: ImageInventory, cfg: Config) -> Tuple[Dict[str, ResolvedPolicy], List[str]]:
